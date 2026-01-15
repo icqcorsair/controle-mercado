@@ -32,6 +32,11 @@ st.markdown("""
         color: #2980b9;
         margin-bottom: -15px;
     }
+    .stock-display {
+        font-size: 13px;
+        color: #7f8c8d;
+        font-weight: normal;
+    }
     .total-box {
         padding: 15px;
         background-color: #d4edda;
@@ -153,7 +158,11 @@ def calcular_sugestao(row, df_hist):
 
 # --- FUNÇÃO DE RENDERIZAR ITEM DO CARRINHO ---
 def renderizar_item_compra(row, sugestao, motivo):
-    st.markdown(f"**{row['Produto']}**")
+    # Mostra Produto e Estoque Atual
+    estoque_atual = int(row['Estoque_Atual'])
+    
+    # Renderiza o nome com o estoque ao lado
+    st.markdown(f"**{row['Produto']}** <span class='stock-display'>(Estoque: {estoque_atual})</span>", unsafe_allow_html=True)
     
     if sugestao > 0:
         st.markdown(f"<span class='suggestion-highlight'>💡 Levar: {sugestao} un ({motivo})</span>", unsafe_allow_html=True)
@@ -174,17 +183,18 @@ def renderizar_item_compra(row, sugestao, motivo):
     else:
         c2.markdown(f"<p class='price-history'>Novo Produto</p>", unsafe_allow_html=True)
 
+    # Input Preço com formatação forçada de 2 casas decimais
     st.number_input(
         "R$ Atual", 
         min_value=0.0, 
         value=ultimo_preco,
-        step=0.01, 
+        step=0.01,
+        format="%.2f", # Força aparecer 2 casas decimais (ex: 4.12)
         key=f"prc_{row['ID']}"
     )
     st.divider()
 
 # --- APLICAÇÃO ---
-# MUDANÇA AQUI: Usando Markdown com tamanho reduzido (h3) em vez de st.title (h1)
 st.markdown("### 🛒 Mercado da Nícia") 
 
 df_produtos, df_historico = load_data()
