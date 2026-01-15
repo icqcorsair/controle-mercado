@@ -26,16 +26,22 @@ st.markdown("""
         color: #e67e22;
         font-weight: bold;
         font-size: 14px;
+        display: block;
+        margin-bottom: 10px;
     }
-    .price-history {
-        font-size: 12px;
-        color: #2980b9;
-        margin-bottom: -15px;
+    /* Estilo para a linha de informações (Estoque e Preço) */
+    .info-row {
+        font-size: 14px;
+        color: #555;
+        margin-top: 5px;      /* Espaço entre nome e info */
+        margin-bottom: 15px;  /* Espaço entre info e inputs */
     }
-    .stock-display {
-        font-size: 13px;
-        color: #7f8c8d;
-        font-weight: normal;
+    .info-item {
+        margin-right: 15px;
+        background-color: #f8f9fa;
+        padding: 4px 8px;
+        border-radius: 5px;
+        border: 1px solid #eee;
     }
     .total-box {
         padding: 15px;
@@ -156,40 +162,48 @@ def calcular_sugestao(row, df_hist):
 
     return int(sugestao + 0.9), motivo
 
-# --- FUNÇÃO DE RENDERIZAR ITEM DO CARRINHO ---
+# --- FUNÇÃO DE RENDERIZAR ITEM DO CARRINHO (VISUAL NOVO) ---
 def renderizar_item_compra(row, sugestao, motivo):
-    # Mostra Produto e Estoque Atual
     estoque_atual = int(row['Estoque_Atual'])
+    ultimo_preco = float(row['Preco'])
     
-    # Renderiza o nome com o estoque ao lado
-    st.markdown(f"**{row['Produto']}** <span class='stock-display'>(Estoque: {estoque_atual})</span>", unsafe_allow_html=True)
+    # Texto formatado do preço antigo
+    txt_preco_antigo = f"R$ {ultimo_preco:.2f}" if ultimo_preco > 0 else "--"
+
+    # 1. Nome do Produto (Negrito)
+    st.markdown(f"**{row['Produto']}**")
     
+    # 2. Linha de Informações (Estoque e Último Preço) com CSS customizado
+    st.markdown(
+        f"""
+        <div class="info-row">
+            <span class="info-item">📦 Estoque: <strong>{estoque_atual}</strong></span>
+            <span class="info-item">💲 Último: <strong>{txt_preco_antigo}</strong></span>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    
+    # 3. Sugestão (se houver)
     if sugestao > 0:
         st.markdown(f"<span class='suggestion-highlight'>💡 Levar: {sugestao} un ({motivo})</span>", unsafe_allow_html=True)
     
+    # 4. Campos de Entrada (Qtde e Preço)
     c1, c2 = st.columns(2)
     
     st.number_input(
-        "Qtd", 
+        "Qtd Comprar", # Label mais clara
         min_value=0, 
         step=1, 
         key=f"qtd_{row['ID']}"
     )
     
-    ultimo_preco = float(row['Preco'])
-    
-    if ultimo_preco > 0:
-        c2.markdown(f"<p class='price-history'>Último: R$ {ultimo_preco:.2f}</p>", unsafe_allow_html=True)
-    else:
-        c2.markdown(f"<p class='price-history'>Novo Produto</p>", unsafe_allow_html=True)
-
-    # Input Preço com formatação forçada de 2 casas decimais
     st.number_input(
-        "R$ Atual", 
+        "R$ Valor Unit.", # Label mais clara
         min_value=0.0, 
         value=ultimo_preco,
         step=0.01,
-        format="%.2f", # Força aparecer 2 casas decimais (ex: 4.12)
+        format="%.2f",
         key=f"prc_{row['ID']}"
     )
     st.divider()
