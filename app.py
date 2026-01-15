@@ -65,8 +65,7 @@ st.markdown("""
 # LISTA DE MERCADOS: "Nome que aparece na tela": "Nome exato do arquivo no Google Sheets"
 MERCADOS_DISPONIVEIS = {
     "🏡 Casa da Nícia": "MercadoApp_DB",
-    "🏢 Escritório": "Mercado_Trabalho_DB", 
-    # Adicione mais linhas aqui se criar mais planilhas
+    "🏢 Casa da Alícia": "Mercado_Alicia_DB", # <--- AJUSTADO AQUI
 }
 
 # --- CONEXÃO GOOGLE SHEETS (Dinamica) ---
@@ -86,7 +85,7 @@ def conectar_google_sheets(nome_planilha):
 def load_data(nome_planilha):
     sh = conectar_google_sheets(nome_planilha)
     if not sh:
-        st.error(f"🚨 Não achei a planilha: {nome_planilha}. Verifique o nome e se compartilhou com o robô.")
+        st.error(f"🚨 Não achei a planilha: {nome_planilha}. Verifique o nome no Google Drive e se compartilhou com o robô.")
         return pd.DataFrame(), pd.DataFrame()
 
     try:
@@ -126,7 +125,7 @@ def save_data(nome_planilha, df_prod, df_hist):
         ws_hist.clear()
         ws_hist.update([df_hist.columns.values.tolist()] + df_hist.values.tolist())
 
-# --- FUNÇÕES AUXILIARES (Cálculos e Renderização) ---
+# --- FUNÇÕES AUXILIARES ---
 def calcular_sugestao(row, df_hist):
     prod_id = row['ID']
     estoque_atual = row['Estoque_Atual']
@@ -190,32 +189,32 @@ if 'mercado_ativo' not in st.session_state:
     st.session_state.nome_planilha_ativa = None
 
 # =========================================================
-# TELA 1: SELEÇÃO DE MERCADO (Se não estiver logado)
+# TELA 1: SELEÇÃO DE MERCADO
 # =========================================================
 if st.session_state.mercado_ativo is None:
     st.markdown("## 👋 Bem-vindo!")
     st.info("Selecione qual lista de compras você quer acessar:")
     
-    # Cria botões para cada mercado configurado no dicionário lá em cima
     for nome_tela, nome_planilha in MERCADOS_DISPONIVEIS.items():
+        # type="primary" destaca o botão
         if st.button(f"Entrar em: {nome_tela}", type="primary"):
             st.session_state.mercado_ativo = nome_tela
             st.session_state.nome_planilha_ativa = nome_planilha
             st.rerun()
 
 # =========================================================
-# TELA 2: O APLICATIVO (Se estiver logado)
+# TELA 2: O APLICATIVO
 # =========================================================
 else:
     # Cabeçalho com botão de sair
     col_titulo, col_sair = st.columns([3, 1])
+    # Título menor (h3) para caber no celular
     col_titulo.markdown(f"### 🛒 {st.session_state.mercado_ativo}")
     if col_sair.button("Sair"):
         st.session_state.mercado_ativo = None
         st.session_state.nome_planilha_ativa = None
         st.rerun()
 
-    # Carrega dados DA PLANILHA SELECIONADA
     df_produtos, df_historico = load_data(st.session_state.nome_planilha_ativa)
 
     tab_carrinho, tab_estoque, tab_gerenciar = st.tabs([
@@ -270,7 +269,6 @@ else:
                 if compras:
                     with st.spinner("Salvando..."):
                         df_historico = pd.concat([df_historico, pd.DataFrame(compras)], ignore_index=True)
-                        # Salva na planilha específica do mercado ativo
                         save_data(st.session_state.nome_planilha_ativa, df_produtos, df_historico)
                     st.balloons()
                     st.success(f"Compra registrada! Total: R$ {total_carrinho_real_time:.2f}")
