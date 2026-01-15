@@ -32,7 +32,6 @@ st.markdown("""
         color: #2980b9;
         margin-bottom: -15px;
     }
-    /* Estilo para o Total Flutuante/Fixo */
     .total-box {
         padding: 15px;
         background-color: #d4edda;
@@ -45,8 +44,9 @@ st.markdown("""
         border: 1px solid #c3e6cb;
     }
     div[data-testid="stExpander"] {
-        border: none;
-        box-shadow: none;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        margin-bottom: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -151,8 +151,42 @@ def calcular_sugestao(row, df_hist):
 
     return int(sugestao + 0.9), motivo
 
+# --- FUNÇÃO DE RENDERIZAR ITEM DO CARRINHO ---
+def renderizar_item_compra(row, sugestao, motivo):
+    st.markdown(f"**{row['Produto']}**")
+    
+    if sugestao > 0:
+        st.markdown(f"<span class='suggestion-highlight'>💡 Levar: {sugestao} un ({motivo})</span>", unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    
+    st.number_input(
+        "Qtd", 
+        min_value=0, 
+        step=1, 
+        key=f"qtd_{row['ID']}"
+    )
+    
+    ultimo_preco = float(row['Preco'])
+    
+    if ultimo_preco > 0:
+        c2.markdown(f"<p class='price-history'>Último: R$ {ultimo_preco:.2f}</p>", unsafe_allow_html=True)
+    else:
+        c2.markdown(f"<p class='price-history'>Novo Produto</p>", unsafe_allow_html=True)
+
+    st.number_input(
+        "R$ Atual", 
+        min_value=0.0, 
+        value=ultimo_preco,
+        step=0.01, 
+        key=f"prc_{row['ID']}"
+    )
+    st.divider()
+
 # --- APLICAÇÃO ---
-st.title("🛒 Mercado da Nícia")
+# MUDANÇA AQUI: Usando Markdown com tamanho reduzido (h3) em vez de st.title (h1)
+st.markdown("### 🛒 Mercado da Nícia") 
+
 df_produtos, df_historico = load_data()
 
 tab_carrinho, tab_estoque, tab_gerenciar = st.tabs([
@@ -160,115 +194,86 @@ tab_carrinho, tab_estoque, tab_gerenciar = st.tabs([
 ])
 
 # =========================================================
-# ABA 1: CARRINHO (Interativo com Total em Tempo Real)
+# ABA 1: CARRINHO (SEGREGADO)
 # =========================================================
 with tab_carrinho:
-    
     if df_produtos.empty:
         st.info("Cadastre produtos na aba 'Gerenciar'.")
     else:
-        # 1. CÁLCULO DO TOTAL EM TEMPO REAL (Antes de desenhar os inputs)
-        # O Streamlit guarda o valor dos inputs no session_state automaticamente
+        lista_recomendados = []
+        lista_opcionais = []
         total_carrinho_real_time = 0.0
         
-        for idx, row in df_produtos.iterrows():
-            # Chaves únicas para os inputs
-            k_qtd = f"qtd_{row['ID']}"
-            k_prc = f"prc_{row['ID']}"
-            
-            # Pega o valor atual (se o usuário digitou) ou 0/Preço Antigo (padrão)
-            qtd_atual = st.session_state.get(k_qtd, 0)
-            prc_atual = st.session_state.get(k_prc, float(row['Preco']))
-            
-            total_carrinho_real_time += (qtd_atual * prc_atual)
-
-        # 2. MOSTRA O TOTAL NO TOPO
-        st.markdown(f"""
-            <div class="total-box">
-                🛒 Total: R$ {total_carrinho_real_time:.2f}
-            </div>
-        """, unsafe_allow_html=True)
-        
-        st.caption("Ajuste as quantidades e preços. O total atualiza automaticamente.")
-
-        # 3. LISTAGEM DOS PRODUTOS (Sem st.form para permitir atualização)
-        inputs_qtd = {} # Para usar no salvamento
-        inputs_preco = {}
+        inputs_qtd_ids = [] 
         
         for idx, row in df_produtos.iterrows():
             sugestao, motivo = calcular_sugestao(row, df_historico)
             
-            st.markdown(f"**{row['Produto']}**")
-            
+            item_data = {'row': row, 'sugestao': sugestao, 'motivo': motivo}
             if sugestao > 0:
-                st.markdown(f"<span class='suggestion-highlight'>💡 Levar: {sugestao} un ({motivo})</span>", unsafe_allow_html=True)
-            
-            c1, c2 = st.columns(2)
-            
-            # Input Quantidade
-            # key=f"qtd_{id}" liga esse input ao cálculo lá de cima
-            inputs_qtd[row['ID']] = c1.number_input(
-                "Qtd", 
-                min_value=0, 
-                step=1, 
-                key=f"qtd_{row['ID']}"
-            )
-            
-            ultimo_preco = float(row['Preco'])
-            
-            if ultimo_preco > 0:
-                c2.markdown(f"<p class='price-history'>Último: R$ {ultimo_preco:.2f}</p>", unsafe_allow_html=True)
+                lista_recomendados.append(item_data)
             else:
-                c2.markdown(f"<p class='price-history'>Novo Produto</p>", unsafe_allow_html=True)
+                lista_opcionais.append(item_data)
+            
+            k_qtd = f"qtd_{row['ID']}"
+            k_prc = f"prc_{row['ID']}"
+            qtd_atual = st.session_state.get(k_qtd, 0)
+            prc_atual = st.session_state.get(k_prc, float(row['Preco']))
+            
+            total_carrinho_real_time += (qtd_atual * prc_atual)
+            inputs_qtd_ids.append(row['ID'])
 
-            # Input Preço
-            inputs_preco[row['ID']] = c2.number_input(
-                "R$ Atual", 
-                min_value=0.0, 
-                value=ultimo_preco,
-                step=0.01, 
-                key=f"prc_{row['ID']}"
-            )
-            st.divider()
+        st.markdown(f"""
+            <div class="total-box">
+                R$ Total: {total_carrinho_real_time:.2f}
+            </div>
+        """, unsafe_allow_html=True)
 
-        # 4. BOTÃO FINALIZAR (Fora do laço)
+        with st.expander(f"⚠️ Recomendados para Compra ({len(lista_recomendados)})", expanded=True):
+            if not lista_recomendados:
+                st.caption("Nenhum item crítico no momento.")
+            for item in lista_recomendados:
+                renderizar_item_compra(item['row'], item['sugestao'], item['motivo'])
+
+        with st.expander(f"✅ Outros Produtos / Estoque OK ({len(lista_opcionais)})", expanded=False):
+            for item in lista_opcionais:
+                renderizar_item_compra(item['row'], 0, "")
+
         if st.button("✅ FINALIZAR COMPRA", type="primary"):
             compras_realizadas = []
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # Processa o que foi digitado
-            for pid, qtd in inputs_qtd.items():
-                if qtd > 0: 
-                    preco_novo = inputs_preco[pid]
+            for pid in inputs_qtd_ids:
+                qtd = st.session_state.get(f"qtd_{pid}", 0)
+                if qtd > 0:
+                    preco = st.session_state.get(f"prc_{pid}", 0.0)
                     
-                    # Atualiza Estoque + Preço
                     df_produtos.loc[df_produtos['ID'] == pid, 'Estoque_Atual'] += qtd
-                    df_produtos.loc[df_produtos['ID'] == pid, 'Preco'] = preco_novo
+                    df_produtos.loc[df_produtos['ID'] == pid, 'Preco'] = preco
                     
                     compras_realizadas.append({
                         'Data': now, 
                         'Produto_ID': pid,
                         'Tipo': 'COMPRA', 
                         'Qtd': qtd, 
-                        'Preco_Na_Epoca': preco_novo
+                        'Preco_Na_Epoca': preco
                     })
             
             if compras_realizadas:
-                with st.spinner("Salvando na nuvem..."):
+                with st.spinner("Salvando..."):
                     df_historico = pd.concat([df_historico, pd.DataFrame(compras_realizadas)], ignore_index=True)
                     save_data(df_produtos, df_historico)
                 
                 st.balloons()
-                st.success(f"Sucesso! Valor final: R$ {total_carrinho_real_time:.2f}")
+                st.success(f"Compra registrada! Total: R$ {total_carrinho_real_time:.2f}")
                 
-                # Limpa os campos de quantidade para 0 após a compra
-                for pid in inputs_qtd.keys():
+                for pid in inputs_qtd_ids:
                     st.session_state[f"qtd_{pid}"] = 0
-                
+                    
                 time.sleep(2)
                 st.rerun()
             else:
-                st.warning("Selecione pelo menos um produto (Qtd > 0).")
+                st.warning("Selecione algum produto.")
 
 # =========================================================
 # ABA 2: ESTOQUE CASA
@@ -346,7 +351,6 @@ with tab_gerenciar:
             
             if submitted:
                 if nome:
-                    # Crítica de Duplicidade
                     nome_limpo = nome.strip()
                     nomes_existentes = []
                     if not df_produtos.empty:
@@ -395,4 +399,4 @@ with tab_gerenciar:
                 st.error("Produto excluído!")
                 time.sleep(1)
                 st.rerun()
-                    
+
