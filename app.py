@@ -101,7 +101,6 @@ def load_data(nome_planilha):
                 if c in df_prod.columns:
                     df_prod[c] = pd.to_numeric(df_prod[c], errors='coerce').fillna(0)
             
-            # Ordenação Alfabética Robusta
             if 'Produto' in df_prod.columns:
                 df_prod = df_prod.sort_values(
                     by='Produto', 
@@ -130,32 +129,20 @@ def save_data(nome_planilha, df_prod, df_hist):
         ws_hist.clear()
         ws_hist.update([df_hist.columns.values.tolist()] + df_hist.values.tolist())
 
-# --- CÁLCULO DE SUGESTÃO (CORRIGIDO) ---
-def calcular_sugestao(row, df_hist):
+# --- FUNÇÃO HELPER: CALCULAR CONSUMO MÉDIO (Retorna valor numérico) ---
+def obter_consumo_medio(row, df_hist):
     prod_id = row['ID']
-    estoque_atual = row['Estoque_Atual']
-    estoque_minimo = row['Estoque_Minimo']
-
     hist = df_hist[df_hist['Produto_ID'] == prod_id].sort_values(by='Data', ascending=False)
     levs = hist[hist['Tipo'] == 'LEVANTAMENTO']
-    
-    sugestao = 0
-    motivo = ""
     
     if len(levs) >= 2:
         ultimo = levs.iloc[0]
         penultimo = levs.iloc[1]
         dt_atual = datetime.strptime(ultimo['Data'], "%Y-%m-%d %H:%M:%S")
         dt_anterior = datetime.strptime(penultimo['Data'], "%Y-%m-%d %H:%M:%S")
-        
         dias = (dt_atual - dt_anterior).days
         
-        # --- TRAVA DE SEGURANÇA AJUSTADA PARA 10 DIAS ---
-        if dias < 10:
-            if estoque_minimo > estoque_atual:
-                sugestao = estoque_minimo - estoque_atual
-                motivo = f"Repor Mínimo ({estoque_minimo})"
-        else:
+        if dias >= 10: # Trava de segurança
             mask_compras = (hist['Tipo'] == 'COMPRA') & \
                            (pd.to_datetime(hist['Data']) > dt_anterior) & \
                            (pd.to_datetime(hist['Data']) <= dt_atual)
@@ -163,15 +150,26 @@ def calcular_sugestao(row, df_hist):
             consumido = (penultimo['Qtd'] + compras) - ultimo['Qtd']
             if consumido < 0: consumido = 0
             
-            consumo_mensal = (consumido / dias) * 30
-            
-            meta_estoque = max(consumo_mensal, estoque_minimo)
-            
-            if meta_estoque > estoque_atual:
-                sugestao = meta_estoque - estoque_atual
-                motivo = f"Consumo: {consumo_mensal:.1f} | Mín: {estoque_minimo}"
-            
+            return (consumido / dias) * 30
+    return None
+
+# --- CÁLCULO DE SUGESTÃO (Usa a helper acima) ---
+def calcular_sugestao(row, df_hist):
+    estoque_atual = row['Estoque_Atual']
+    estoque_minimo = row['Estoque_Minimo']
+    
+    consumo_mensal = obter_consumo_medio(row, df_hist)
+    
+    sugestao = 0
+    motivo = ""
+    
+    if consumo_mensal is not None:
+        meta_estoque = max(consumo_mensal, estoque_minimo)
+        if meta_estoque > estoque_atual:
+            sugestao = meta_estoque - estoque_atual
+            motivo = f"Consumo: {consumo_mensal:.1f} | Mín: {estoque_minimo}"
     else:
+        # Sem histórico suficiente
         if estoque_minimo > estoque_atual:
             sugestao = estoque_minimo - estoque_atual
             motivo = f"Repor Mínimo ({estoque_minimo})"
@@ -328,8 +326,10 @@ else:
 
     # --- ABA GERENCIAR ---
     with tab_gerenciar:
-        st.markdown("### ⚙️ Cadastro")
-        with st.expander("➕ Novo Produto", expanded=True):
+        st.markdown("### ⚙️ Gerenciar")
+        
+        # --- BLOCO 1: CADASTRO ---
+        with st.expander("➕ Novo Produto", expanded=False):
             with st.form("cad_form", clear_on_submit=False): 
                 nome = st.text_input("Nome do Produto")
                 marca = st.text_input("Marca")
@@ -360,15 +360,74 @@ else:
                     else:
                         st.warning("Nome obrigatório.")
 
-        st.write("---")
-        with st.expander("🗑️ Excluir"):
+        # --- BLOCO 2: EDIÇÃO (NOVO) ---
+        with st.expander("✏️ Editar/Alterar Produto", expanded=False):
             if not df_produtos.empty:
+                # Selectbox para escolher qual editar
                 lista_prods = df_produtos['Produto'].tolist()
-                p_del = st.selectbox("Selecione:", lista_prods)
+                prod_selecionado = st.selectbox("Selecione para editar:", lista_prods)
+                
+                # Pega os dados atuais
+                dados_atuais = df_produtos[df_produtos['Produto'] == prod_selecionado].iloc[0]
+                
+                # Calcula consumo médio para referência
+                consumo_ref = obter_consumo_medio(dados_atuais, df_historico)
+                if consumo_ref:
+                    st.info(f"📊 Média de consumo calculada: **{consumo_ref:.1f} unidades/mês**")
+                else:
+                    st.caption("Sem histórico suficiente para cálculo de média.")
+
+                with st.form("edit_form"):
+                    st.write("Faça as alterações abaixo:")
+                    
+                    # Campos preenchidos com valores atuais
+                    novo_nome = st.text_input("Nome", value=dados_atuais['Produto'])
+                    nova_marca = st.text_input("Marca", value=str(dados_atuais['Marca']))
+                    
+                    col_e1, col_e2 = st.columns(2)
+                    novo_estoque = col_e1.number_input("Estoque Atual", min_value=0, value=int(dados_atuais['Estoque_Atual']))
+                    novo_minimo = col_e2.number_input("Estoque Mínimo", min_value=1, value=int(dados_atuais['Estoque_Minimo']))
+                    
+                    if st.form_submit_button("Salvar Alterações"):
+                        # Verificação de Duplicidade de Nome (se mudou o nome)
+                        nome_limpo = novo_nome.strip()
+                        pode_salvar = True
+                        
+                        if nome_limpo.lower() != str(dados_atuais['Produto']).strip().lower():
+                            # Se mudou de nome, verifica se já existe outro igual
+                            existentes = df_produtos['Produto'].astype(str).str.strip().str.lower().tolist()
+                            if nome_limpo.lower() in existentes:
+                                st.error(f"Erro: O nome '{novo_nome}' já existe em outro produto.")
+                                pode_salvar = False
+                        
+                        if pode_salvar:
+                            # Atualiza DataFrame
+                            pid = dados_atuais['ID']
+                            df_produtos.loc[df_produtos['ID'] == pid, 'Produto'] = nome_limpo
+                            df_produtos.loc[df_produtos['ID'] == pid, 'Marca'] = nova_marca
+                            df_produtos.loc[df_produtos['ID'] == pid, 'Estoque_Minimo'] = novo_minimo
+                            
+                            # Se mudou estoque, gera LOG
+                            if novo_estoque != int(dados_atuais['Estoque_Atual']):
+                                df_produtos.loc[df_produtos['ID'] == pid, 'Estoque_Atual'] = novo_estoque
+                                log = {'Data': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Produto_ID': pid, 'Tipo': 'LEVANTAMENTO', 'Qtd': novo_estoque, 'Preco_Na_Epoca': 0}
+                                df_historico = pd.concat([df_historico, pd.DataFrame([log])], ignore_index=True)
+                            
+                            save_data(st.session_state.nome_planilha_ativa, df_produtos, df_historico)
+                            st.success("Produto atualizado com sucesso!")
+                            time.sleep(1)
+                            st.rerun()
+
+        # --- BLOCO 3: EXCLUSÃO ---
+        st.write("---")
+        with st.expander("🗑️ Excluir Produto"):
+            if not df_produtos.empty:
+                p_del = st.selectbox("Selecione para excluir:", df_produtos['Produto'].tolist(), key='sel_del')
                 if st.button("Confirmar Exclusão"):
                     df_produtos = df_produtos[df_produtos['Produto'] != p_del]
                     save_data(st.session_state.nome_planilha_ativa, df_produtos, df_historico)
                     st.error("Excluído!")
                     time.sleep(1)
                     st.rerun()
+
 
