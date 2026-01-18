@@ -101,8 +101,7 @@ def load_data(nome_planilha):
                 if c in df_prod.columns:
                     df_prod[c] = pd.to_numeric(df_prod[c], errors='coerce').fillna(0)
             
-            # --- CORREÇÃO 1: ORDENAÇÃO ROBUSTA ---
-            # Ordena ignorando maiúsculas/minúsculas para garantir ordem alfabética real
+            # Ordenação Alfabética Robusta
             if 'Produto' in df_prod.columns:
                 df_prod = df_prod.sort_values(
                     by='Produto', 
@@ -131,7 +130,7 @@ def save_data(nome_planilha, df_prod, df_hist):
         ws_hist.clear()
         ws_hist.update([df_hist.columns.values.tolist()] + df_hist.values.tolist())
 
-# --- FUNÇÕES AUXILIARES ---
+# --- CÁLCULO DE SUGESTÃO (CORRIGIDO) ---
 def calcular_sugestao(row, df_hist):
     prod_id = row['ID']
     estoque_atual = row['Estoque_Atual']
@@ -143,39 +142,41 @@ def calcular_sugestao(row, df_hist):
     sugestao = 0
     motivo = ""
     
-    # --- CORREÇÃO 2: LÓGICA DE CÁLCULO MELHORADA ---
-    # Se tem histórico suficiente, calcula a média mensal
     if len(levs) >= 2:
         ultimo = levs.iloc[0]
         penultimo = levs.iloc[1]
         dt_atual = datetime.strptime(ultimo['Data'], "%Y-%m-%d %H:%M:%S")
         dt_anterior = datetime.strptime(penultimo['Data'], "%Y-%m-%d %H:%M:%S")
+        
         dias = (dt_atual - dt_anterior).days
-        if dias == 0: dias = 1
         
-        mask_compras = (hist['Tipo'] == 'COMPRA') & \
-                       (pd.to_datetime(hist['Data']) > dt_anterior) & \
-                       (pd.to_datetime(hist['Data']) <= dt_atual)
-        compras = hist.loc[mask_compras, 'Qtd'].sum()
-        consumido = (penultimo['Qtd'] + compras) - ultimo['Qtd']
-        if consumido < 0: consumido = 0
-        
-        consumo_mensal = (consumido / dias) * 30
-        
-        # AQUI MUDOU: A meta é o MAIOR valor entre (O que consome) E (O Mínimo de segurança)
-        meta_estoque = max(consumo_mensal, estoque_minimo)
-        
-        if meta_estoque > estoque_atual:
-            sugestao = meta_estoque - estoque_atual
-            motivo = f"Consumo: {consumo_mensal:.1f} | Mín: {estoque_minimo}"
+        # --- TRAVA DE SEGURANÇA AJUSTADA PARA 10 DIAS ---
+        if dias < 10:
+            if estoque_minimo > estoque_atual:
+                sugestao = estoque_minimo - estoque_atual
+                motivo = f"Repor Mínimo ({estoque_minimo})"
+        else:
+            mask_compras = (hist['Tipo'] == 'COMPRA') & \
+                           (pd.to_datetime(hist['Data']) > dt_anterior) & \
+                           (pd.to_datetime(hist['Data']) <= dt_atual)
+            compras = hist.loc[mask_compras, 'Qtd'].sum()
+            consumido = (penultimo['Qtd'] + compras) - ultimo['Qtd']
+            if consumido < 0: consumido = 0
+            
+            consumo_mensal = (consumido / dias) * 30
+            
+            meta_estoque = max(consumo_mensal, estoque_minimo)
+            
+            if meta_estoque > estoque_atual:
+                sugestao = meta_estoque - estoque_atual
+                motivo = f"Consumo: {consumo_mensal:.1f} | Mín: {estoque_minimo}"
             
     else:
-        # Se não tem histórico, baseia-se puramente no mínimo
         if estoque_minimo > estoque_atual:
             sugestao = estoque_minimo - estoque_atual
             motivo = f"Repor Mínimo ({estoque_minimo})"
             
-    return int(sugestao + 0.9), motivo # Arredonda pra cima
+    return int(sugestao + 0.9), motivo
 
 def renderizar_item_compra(row, sugestao, motivo):
     estoque_atual = int(row['Estoque_Atual'])
@@ -341,7 +342,6 @@ else:
                         nome_limpo = nome.strip()
                         existentes = []
                         if not df_produtos.empty: 
-                            # Convertendo para minúsculo para comparar
                             existentes = df_produtos['Produto'].astype(str).str.strip().str.lower().tolist()
                         
                         if nome_limpo.lower() in existentes:
