@@ -61,14 +61,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONFIGURAÇÃO DOS MERCADOS/USUÁRIOS ---
-# LISTA DE MERCADOS: "Nome que aparece na tela": "Nome exato do arquivo no Google Sheets"
+# --- CONFIGURAÇÃO DOS MERCADOS ---
 MERCADOS_DISPONIVEIS = {
     "🏡 Casa da Nícia": "MercadoApp_DB",
-    "🏢 Casa da Alícia": "Mercado_Alicia_DB", # <--- AJUSTADO AQUI
+    "🏢 Casa da Alícia": "Mercado_Alicia_DB",
 }
 
-# --- CONEXÃO GOOGLE SHEETS (Dinamica) ---
+# --- CONEXÃO GOOGLE SHEETS ---
 @st.cache_resource
 def conectar_google_sheets(nome_planilha):
     try:
@@ -76,7 +75,6 @@ def conectar_google_sheets(nome_planilha):
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # Abre a planilha específica passada pelo parâmetro
         sheet = client.open(nome_planilha) 
         return sheet
     except Exception as e:
@@ -85,7 +83,7 @@ def conectar_google_sheets(nome_planilha):
 def load_data(nome_planilha):
     sh = conectar_google_sheets(nome_planilha)
     if not sh:
-        st.error(f"🚨 Não achei a planilha: {nome_planilha}. Verifique o nome no Google Drive e se compartilhou com o robô.")
+        st.error(f"🚨 Não achei a planilha: {nome_planilha}")
         return pd.DataFrame(), pd.DataFrame()
 
     try:
@@ -102,7 +100,15 @@ def load_data(nome_planilha):
             for c in cols:
                 if c in df_prod.columns:
                     df_prod[c] = pd.to_numeric(df_prod[c], errors='coerce').fillna(0)
-            df_prod = df_prod.sort_values(by='Produto', ascending=True)
+            
+            # --- CORREÇÃO 1: ORDENAÇÃO ROBUSTA ---
+            # Ordena ignorando maiúsculas/minúsculas para garantir ordem alfabética real
+            if 'Produto' in df_prod.columns:
+                df_prod = df_prod.sort_values(
+                    by='Produto', 
+                    key=lambda col: col.str.lower(), 
+                    ascending=True
+                )
 
         if not df_hist.empty:
             cols_h = ['Produto_ID', 'Qtd', 'Preco_Na_Epoca']
@@ -137,6 +143,8 @@ def calcular_sugestao(row, df_hist):
     sugestao = 0
     motivo = ""
     
+    # --- CORREÇÃO 2: LÓGICA DE CÁLCULO MELHORADA ---
+    # Se tem histórico suficiente, calcula a média mensal
     if len(levs) >= 2:
         ultimo = levs.iloc[0]
         penultimo = levs.iloc[1]
@@ -151,16 +159,23 @@ def calcular_sugestao(row, df_hist):
         compras = hist.loc[mask_compras, 'Qtd'].sum()
         consumido = (penultimo['Qtd'] + compras) - ultimo['Qtd']
         if consumido < 0: consumido = 0
+        
         consumo_mensal = (consumido / dias) * 30
         
-        if consumo_mensal > estoque_atual:
-            sugestao = consumo_mensal - estoque_atual
-            motivo = f"Média consumo: {consumo_mensal:.1f}"
+        # AQUI MUDOU: A meta é o MAIOR valor entre (O que consome) E (O Mínimo de segurança)
+        meta_estoque = max(consumo_mensal, estoque_minimo)
+        
+        if meta_estoque > estoque_atual:
+            sugestao = meta_estoque - estoque_atual
+            motivo = f"Consumo: {consumo_mensal:.1f} | Mín: {estoque_minimo}"
+            
     else:
+        # Se não tem histórico, baseia-se puramente no mínimo
         if estoque_minimo > estoque_atual:
             sugestao = estoque_minimo - estoque_atual
-            motivo = f"Abaixo do mínimo"
-    return int(sugestao + 0.9), motivo
+            motivo = f"Repor Mínimo ({estoque_minimo})"
+            
+    return int(sugestao + 0.9), motivo # Arredonda pra cima
 
 def renderizar_item_compra(row, sugestao, motivo):
     estoque_atual = int(row['Estoque_Atual'])
@@ -183,32 +198,29 @@ def renderizar_item_compra(row, sugestao, motivo):
     st.number_input("R$ Valor Unit.", min_value=0.0, value=ultimo_preco, step=0.01, format="%.2f", key=f"prc_{row['ID']}")
     st.divider()
 
-# --- LÓGICA DE SESSÃO (LOGIN) ---
+# --- SESSÃO ---
 if 'mercado_ativo' not in st.session_state:
     st.session_state.mercado_ativo = None
     st.session_state.nome_planilha_ativa = None
 
 # =========================================================
-# TELA 1: SELEÇÃO DE MERCADO
+# TELA 1: SELEÇÃO
 # =========================================================
 if st.session_state.mercado_ativo is None:
     st.markdown("## 👋 Bem-vindo!")
     st.info("Selecione qual lista de compras você quer acessar:")
     
     for nome_tela, nome_planilha in MERCADOS_DISPONIVEIS.items():
-        # type="primary" destaca o botão
         if st.button(f"Entrar em: {nome_tela}", type="primary"):
             st.session_state.mercado_ativo = nome_tela
             st.session_state.nome_planilha_ativa = nome_planilha
             st.rerun()
 
 # =========================================================
-# TELA 2: O APLICATIVO
+# TELA 2: APP
 # =========================================================
 else:
-    # Cabeçalho com botão de sair
     col_titulo, col_sair = st.columns([3, 1])
-    # Título menor (h3) para caber no celular
     col_titulo.markdown(f"### 🛒 {st.session_state.mercado_ativo}")
     if col_sair.button("Sair"):
         st.session_state.mercado_ativo = None
@@ -221,7 +233,7 @@ else:
         "🛒 Fazer Compras", "🏠 Estoque Casa", "⚙️ Gerenciar"
     ])
 
-    # --- ABA 1: CARRINHO ---
+    # --- ABA CARRINHO ---
     with tab_carrinho:
         if df_produtos.empty:
             st.info("Cadastre produtos na aba 'Gerenciar'.")
@@ -278,7 +290,7 @@ else:
                 else:
                     st.warning("Selecione algum produto.")
 
-    # --- ABA 2: ESTOQUE ---
+    # --- ABA ESTOQUE ---
     with tab_estoque:
         st.markdown("### Auditoria de Estoque")
         if df_produtos.empty:
@@ -313,7 +325,7 @@ else:
                     else:
                         st.info("Nenhuma alteração.")
 
-    # --- ABA 3: GERENCIAR ---
+    # --- ABA GERENCIAR ---
     with tab_gerenciar:
         st.markdown("### ⚙️ Cadastro")
         with st.expander("➕ Novo Produto", expanded=True):
@@ -328,7 +340,9 @@ else:
                     if nome:
                         nome_limpo = nome.strip()
                         existentes = []
-                        if not df_produtos.empty: existentes = df_produtos['Produto'].astype(str).str.strip().str.lower().tolist()
+                        if not df_produtos.empty: 
+                            # Convertendo para minúsculo para comparar
+                            existentes = df_produtos['Produto'].astype(str).str.strip().str.lower().tolist()
                         
                         if nome_limpo.lower() in existentes:
                             st.error(f"⚠️ '{nome}' já existe!")
